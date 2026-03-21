@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -51,17 +52,19 @@ func initConfig() {
 }
 
 func runSetup() error {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
 	defaultDir := filepath.Join(home, "conductor", "repos")
 
 	var reposDir string
-	err := huh.NewInput().
+	if err := huh.NewInput().
 		Title("Setup: repos directory").
 		Description("Where are your project repositories?").
 		Placeholder(defaultDir).
 		Value(&reposDir).
-		Run()
-	if err != nil {
+		Run(); err != nil {
 		return err
 	}
 
@@ -69,16 +72,17 @@ func runSetup() error {
 		reposDir = defaultDir
 	}
 
-	if len(reposDir) > 1 && reposDir[:2] == "~/" {
+	if strings.HasPrefix(reposDir, "~/") {
 		reposDir = filepath.Join(home, reposDir[2:])
 	}
+
+	reposDir = filepath.Clean(reposDir)
 
 	if _, err := os.Stat(reposDir); os.IsNotExist(err) {
 		return fmt.Errorf("directory not found: %s", reposDir)
 	}
 
-	newCfg := &config.Config{ReposDir: reposDir}
-	if err := config.Save(newCfg); err != nil {
+	if err := config.Save(&config.Config{ReposDir: reposDir}); err != nil {
 		return err
 	}
 
@@ -96,15 +100,14 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		if action == "__new__" {
 			created, back := newSessionFlow()
 			if back {
-				continue // back to session picker
+				continue
 			}
 			if created {
-				return nil // attached via syscall.Exec
+				return nil
 			}
 			continue
 		}
 
-		// attach to existing session
 		return tmux.Attach(action)
 	}
 }
@@ -129,24 +132,20 @@ func showSessionPicker() (string, bool) {
 	return result.Value, false
 }
 
-// newSessionFlow: select project → session name → worktree? → create
 func newSessionFlow() (bool, bool) {
-	// 1. select project
 	projectPath, back := pickProject()
 	if back {
 		return false, true
 	}
 
-	// 2. enter session name
 	defaultName := sanitizeSessionName(filepath.Base(projectPath))
 
 	var sessionName string
-	err := huh.NewInput().
+	if err := huh.NewInput().
 		Title("Session name").
 		Placeholder(defaultName).
 		Value(&sessionName).
-		Run()
-	if err != nil {
+		Run(); err != nil {
 		return false, true
 	}
 
@@ -154,34 +153,37 @@ func newSessionFlow() (bool, bool) {
 		sessionName = defaultName
 	}
 	sessionName = sanitizeSessionName(sessionName)
+	if sessionName == "" {
+		sessionName = "session"
+	}
 
-	// 3. ask about worktree
 	workDir := projectPath
 	if isGitRepo(projectPath) {
 		var createWorktree bool
-		err := huh.NewConfirm().
+		if err := huh.NewConfirm().
 			Title("Create new worktree + branch?").
 			Value(&createWorktree).
-			Run()
-		if err != nil {
+			Run(); err != nil {
 			return false, true
 		}
 
 		if createWorktree {
-			branchName := sessionName
-			wtPath := filepath.Join(projectPath, ".worktrees", branchName)
-			if err := createGitWorktree(projectPath, wtPath, branchName); err != nil {
+			wtPath := filepath.Join(projectPath, ".worktrees", sessionName)
+			if err := createGitWorktree(projectPath, wtPath, sessionName); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to create worktree: %v\n", err)
 				return false, false
 			}
-			fmt.Printf("Worktree created: %s (branch: %s)\n", wtPath, branchName)
+			fmt.Printf("Worktree created: %s (branch: %s)\n", wtPath, sessionName)
 			workDir = wtPath
 		}
 	}
 
-	// 4. create and attach
 	if tmux.SessionExists(sessionName) {
-		return true, tmux.Attach(sessionName) != nil
+		if err := tmux.Attach(sessionName); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to attach: %v\n", err)
+			return false, false
+		}
+		return true, false
 	}
 
 	if err := tmux.NewSession(sessionName, workDir); err != nil {
@@ -189,7 +191,11 @@ func newSessionFlow() (bool, bool) {
 		return false, false
 	}
 
-	return true, tmux.Attach(sessionName) != nil
+	if err := tmux.Attach(sessionName); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach: %v\n", err)
+		return false, false
+	}
+	return true, false
 }
 
 func isGitRepo(path string) bool {
@@ -213,7 +219,11 @@ func pickProject() (string, bool) {
 	}
 
 	projects, err := project.Discover(cfg.ReposDir)
-	if err != nil || len(projects) == 0 {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error discovering projects: %v\n", err)
+		return "", true
+	}
+	if len(projects) == 0 {
 		fmt.Fprintf(os.Stderr, "no projects found in %s\n", cfg.ReposDir)
 		return "", true
 	}
@@ -231,10 +241,8 @@ func pickProject() (string, bool) {
 	return result.Value, false
 }
 
+var unsafeChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
 func sanitizeSessionName(name string) string {
-	r := strings.NewReplacer(
-		".", "-", ":", "-", "!", "-",
-		" ", "-", "/", "-",
-	)
-	return r.Replace(name)
+	return unsafeChars.ReplaceAllString(name, "-")
 }

@@ -14,25 +14,41 @@ type Config struct {
 }
 
 func ConfigPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
 	return filepath.Join(home, ".config", "mux", "config.yaml")
 }
 
 func Exists() bool {
-	_, err := os.Stat(ConfigPath())
+	path := ConfigPath()
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
 	return err == nil
 }
 
 func Load() (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	viper.SetConfigFile(ConfigPath())
+	path := ConfigPath()
+	if path != "" {
+		viper.SetConfigFile(path)
+	}
 	viper.SetDefault("repos_dir", filepath.Join(home, "conductor", "repos"))
 
-	_ = viper.ReadInConfig() // ignore file-not-found
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("config read error: %w", err)
+			}
+		}
+	}
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
@@ -46,13 +62,16 @@ func Load() (*Config, error) {
 
 func Save(cfg *Config) error {
 	path := ConfigPath()
+	if path == "" {
+		return fmt.Errorf("cannot determine config path")
+	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("failed to create config dir: %w", err)
 	}
 
 	content := fmt.Sprintf("repos_dir: %s\n", cfg.ReposDir)
-	return os.WriteFile(path, []byte(content), 0644)
+	return os.WriteFile(path, []byte(content), 0600)
 }
 
 func expandHome(path, home string) string {
