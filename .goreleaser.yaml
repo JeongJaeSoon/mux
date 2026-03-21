@@ -1,0 +1,39 @@
+version: 2
+
+builds:
+  - main: .
+    binary: mux
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: JeongJaeSoon
+      name: homebrew-tap
+    homepage: "https://github.com/JeongJaeSoon/mux"
+    description: "tmux session manager with interactive TUI"
+    install: |
+      bin.install "mux"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
