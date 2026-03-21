@@ -2,7 +2,6 @@ package project
 
 import (
 	"io/fs"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -34,19 +33,16 @@ func Discover(reposDir string) ([]Project, error) {
 			return nil
 		}
 
-		// skip hidden/excluded dirs
 		name := d.Name()
 		if skipDirs[name] {
 			return fs.SkipDir
 		}
 
-		// maxdepth 3
 		depth := strings.Count(filepath.Clean(path), string(filepath.Separator)) - baseDepth
 		if depth > 3 {
 			return fs.SkipDir
 		}
 
-		// skip root itself
 		if path == reposDir {
 			return nil
 		}
@@ -71,29 +67,4 @@ func Discover(reposDir string) ([]Project, error) {
 	})
 
 	return projects, nil
-}
-
-func DetectBranch(projectPath string) string {
-	out, err := exec.Command("git", "-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		return "main"
-	}
-	branch := strings.TrimSpace(string(out))
-	if branch == "" {
-		return "main"
-	}
-	return branch
-}
-
-func SessionName(basename, branch string) string {
-	name := basename + "/" + branch
-	// sanitize characters that are problematic for tmux session names
-	replacer := strings.NewReplacer(
-		".", "-", ":", "-", "!", "-",
-		"$", "-", "`", "-", "\\", "-",
-		"\"", "-", "'", "-", ";", "-",
-		"|", "-", "&", "-", ">", "-",
-		"<", "-", " ", "-",
-	)
-	return replacer.Replace(name)
 }
