@@ -23,6 +23,7 @@ brews:
   - repository:
       owner: JeongJaeSoon
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/JeongJaeSoon/mux"
     description: "tmux session manager with interactive TUI"
     install: |
