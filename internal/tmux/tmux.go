@@ -24,8 +24,10 @@ func SessionExists(name string) bool {
 	return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil
 }
 
-func NewSession(name, dir string) error {
-	return exec.Command("tmux", "new-session", "-d", "-s", name, "-c", dir).Run()
+func NewSession(name, dir string, initialArgs ...string) error {
+	args := []string{"new-session", "-d", "-s", name, "-c", dir}
+	args = append(args, initialArgs...)
+	return exec.Command("tmux", args...).Run()
 }
 
 func KillSession(name string) error {
