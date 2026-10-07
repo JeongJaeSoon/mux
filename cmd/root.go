@@ -16,7 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var cfg *config.Config
+var (
+	cfg       *config.Config
+	useClaude bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "mux",
@@ -33,6 +36,8 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.Flags().BoolVar(&useClaude, "claude", false,
+		"Launch claude inside the new session (uses claude's -w for worktree; no effect when attaching to an existing session)")
 }
 
 func initConfig() {
@@ -91,6 +96,12 @@ func runSetup() error {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
+	if useClaude {
+		if _, err := exec.LookPath("claude"); err != nil {
+			return fmt.Errorf("--claude is set but 'claude' was not found in PATH")
+		}
+	}
+
 	for {
 		action, back := showSessionPicker()
 		if back {
@@ -98,7 +109,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		}
 
 		if action == "__new__" {
-			created, back := newSessionFlow()
+			created, back := newSessionFlow(useClaude)
 			if back {
 				continue
 			}
@@ -132,7 +143,7 @@ func showSessionPicker() (string, bool) {
 	return result.Value, false
 }
 
-func newSessionFlow() (bool, bool) {
+func newSessionFlow(useClaude bool) (bool, bool) {
 	projectPath, back := pickProject()
 	if back {
 		return false, true
@@ -158,7 +169,16 @@ func newSessionFlow() (bool, bool) {
 	}
 
 	workDir := projectPath
-	if isGitRepo(projectPath) {
+	var initialArgs []string
+
+	if useClaude {
+		initialArgs = []string{"claude"}
+		if isGitRepo(projectPath) {
+			initialArgs = append(initialArgs, "-w", sessionName)
+		} else {
+			fmt.Fprintln(os.Stderr, "not a git repo; launching claude without worktree")
+		}
+	} else if isGitRepo(projectPath) {
 		var createWorktree bool
 		if err := huh.NewConfirm().
 			Title("Create new worktree + branch?").
@@ -186,7 +206,7 @@ func newSessionFlow() (bool, bool) {
 		return true, false
 	}
 
-	if err := tmux.NewSession(sessionName, workDir); err != nil {
+	if err := tmux.NewSession(sessionName, workDir, initialArgs...); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create session: %v\n", err)
 		return false, false
 	}
